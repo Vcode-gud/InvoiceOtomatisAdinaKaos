@@ -36,6 +36,12 @@ const produkList = {
   Polo: {
     "Semua Warna": { S: 87000, M: 87000, L: 87000, XL: 87000, "2XL": 93500, "3XL": 100000 },
   },
+  Desain: {
+    Layanan: { "Per Desain": 10000 },
+  },
+  "Sablon/Bordir": {
+    Layanan: { "Per Item": 15000 },
+  },
 }
 
 interface InvoiceItem {
@@ -298,11 +304,17 @@ export default function Home() {
                     <SelectValue placeholder="Ukuran" />
                   </SelectTrigger>
                   <SelectContent>
-                    {["S", "M", "L", "XL", "2XL", "3XL"].map((size) => (
-                      <SelectItem key={size} value={size}>
-                        {size}
-                      </SelectItem>
-                    ))}
+                    {currentItem.product &&
+                      currentItem.color &&
+                      Object.keys(
+                        produkList[currentItem.product as keyof typeof produkList][
+                          currentItem.color as keyof (typeof produkList)[keyof typeof produkList]
+                        ],
+                      ).map((size) => (
+                        <SelectItem key={size} value={size}>
+                          {size}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
