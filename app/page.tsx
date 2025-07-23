@@ -128,27 +128,73 @@ export default function Home() {
   const generatePDF = () => {
     const element = document.getElementById("invoice")
     if (element) {
+      // Hide interactive elements before generating PDF
+      const interactiveElements = element.querySelectorAll(".pdf-hide")
+      interactiveElements.forEach((el) => {
+        ;(el as HTMLElement).style.display = "none"
+      })
+
       const opt = {
-        margin: 1,
-        filename: `${invoiceData.invoiceNumber}.pdf`,
+        margin: 0.5,
+        filename: `Invoice-${invoiceData.invoiceNumber}.pdf`,
         image: { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2 },
-        jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+        },
+        jsPDF: {
+          unit: "in",
+          format: "a4",
+          orientation: "portrait",
+        },
       }
-      html2pdf().set(opt).from(element).save()
+
+      html2pdf()
+        .set(opt)
+        .from(element)
+        .save()
+        .then(() => {
+          // Show interactive elements back after PDF generation
+          interactiveElements.forEach((el) => {
+            ;(el as HTMLElement).style.display = ""
+          })
+          alert("PDF berhasil diunduh!")
+        })
+        .catch((error) => {
+          console.error("Error generating PDF:", error)
+          alert("Gagal mengunduh PDF")
+          // Show interactive elements back even if there's an error
+          interactiveElements.forEach((el) => {
+            ;(el as HTMLElement).style.display = ""
+          })
+        })
     }
   }
 
   const handleSave = async () => {
+    if (!invoiceData.customer || invoiceData.items.length === 0) {
+      alert("Mohon lengkapi informasi pelanggan dan tambahkan minimal 1 item")
+      return
+    }
+
     try {
-      await fetch("/api/save", {
+      const response = await fetch("/api/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(invoiceData),
       })
-      alert("Invoice berhasil disimpan!")
+
+      const result = await response.json()
+
+      if (result.success) {
+        alert(`Invoice ${invoiceData.invoiceNumber} berhasil disimpan!`)
+      } else {
+        alert("Gagal menyimpan invoice: " + result.message)
+      }
     } catch (error) {
-      alert("Gagal menyimpan invoice")
+      console.error("Error saving invoice:", error)
+      alert("Gagal menyimpan invoice. Silakan coba lagi.")
     }
   }
 
@@ -409,7 +455,7 @@ export default function Home() {
                       <TableHead className="text-center font-semibold">Qty</TableHead>
                       <TableHead className="text-right font-semibold">Harga Satuan</TableHead>
                       <TableHead className="text-right font-semibold">Total</TableHead>
-                      <TableHead className="w-12"></TableHead>
+                      <TableHead className="w-12 pdf-hide"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -421,7 +467,7 @@ export default function Home() {
                         <TableCell className="text-center">{item.quantity}</TableCell>
                         <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
                         <TableCell className="text-right font-semibold">{formatCurrency(item.total)}</TableCell>
-                        <TableCell>
+                        <TableCell className="pdf-hide">
                           <Button
                             variant="ghost"
                             size="sm"
