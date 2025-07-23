@@ -8,8 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Trash2, Download, Save, Plus, User, MapPin, Phone, ShoppingBag } from "lucide-react"
-import html2pdf from "html2pdf.js"
+import { Trash2, Download, Save, Plus, User, MapPin, Phone, ShoppingBag, CreditCard } from "lucide-react"
 import Image from "next/image"
 
 const produkList = {
@@ -61,6 +60,7 @@ interface InvoiceData {
   phone: string
   items: InvoiceItem[]
   note: string
+  dpAmount: number
 }
 
 export default function Home() {
@@ -72,6 +72,7 @@ export default function Home() {
     phone: "",
     items: [],
     note: "",
+    dpAmount: 0,
   })
 
   const [currentItem, setCurrentItem] = useState({
@@ -81,6 +82,8 @@ export default function Home() {
     quantity: 1,
     unitPrice: 0,
   })
+
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
 
   useEffect(() => {
     const now = new Date()
@@ -125,50 +128,130 @@ export default function Home() {
     }))
   }
 
-  const generatePDF = () => {
+  const generatePDF = async () => {
+    if (invoiceData.items.length === 0) {
+      alert("Mohon tambahkan minimal 1 item untuk membuat PDF")
+      return
+    }
+
+    setIsGeneratingPDF(true)
+
+    try {
+      // Dynamic import html2pdf
+      const html2pdf = (await import("html2pdf.js")).default
+
+      const element = document.getElementById("invoice")
+      if (element) {
+        // Hide interactive elements before generating PDF
+        const interactiveElements = element.querySelectorAll(".pdf-hide")
+        interactiveElements.forEach((el) => {
+          ;(el as HTMLElement).style.display = "none"
+        })
+
+        // Clone the element to avoid modifying the original
+        const clonedElement = element.cloneNode(true) as HTMLElement
+
+        // Configure PDF options
+        const opt = {
+          margin: [0.5, 0.5, 0.5, 0.5],
+          filename: `Invoice-${invoiceData.invoiceNumber}.pdf`,
+          image: {
+            type: "jpeg",
+            quality: 0.98,
+          },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            letterRendering: true,
+            logging: false,
+          },
+          jsPDF: {
+            unit: "in",
+            format: "a4",
+            orientation: "portrait",
+          },
+        }
+
+        // Generate PDF
+        await html2pdf().set(opt).from(clonedElement).save()
+
+        // Show interactive elements back
+        interactiveElements.forEach((el) => {
+          ;(el as HTMLElement).style.display = ""
+        })
+
+        alert("PDF berhasil diunduh!")
+      }
+    } catch (error) {
+      console.error("Error generating PDF:", error)
+      alert("Gagal mengunduh PDF. Silakan coba lagi.")
+    } finally {
+      setIsGeneratingPDF(false)
+    }
+  }
+
+  // Alternative PDF generation using window.print
+  const generatePDFPrint = () => {
+    if (invoiceData.items.length === 0) {
+      alert("Mohon tambahkan minimal 1 item untuk membuat PDF")
+      return
+    }
+
     const element = document.getElementById("invoice")
     if (element) {
-      // Hide interactive elements before generating PDF
+      // Hide interactive elements
       const interactiveElements = element.querySelectorAll(".pdf-hide")
       interactiveElements.forEach((el) => {
         ;(el as HTMLElement).style.display = "none"
       })
 
-      const opt = {
-        margin: 0.5,
-        filename: `Invoice-${invoiceData.invoiceNumber}.pdf`,
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: {
-          scale: 2,
-          useCORS: true,
-          allowTaint: true,
-        },
-        jsPDF: {
-          unit: "in",
-          format: "a4",
-          orientation: "portrait",
-        },
+      // Create a new window for printing
+      const printWindow = window.open("", "_blank")
+      if (printWindow) {
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>Invoice ${invoiceData.invoiceNumber}</title>
+              <style>
+                body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+                .invoice-container { max-width: 800px; margin: 0 auto; }
+                table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f5f5f5; font-weight: bold; }
+                .text-right { text-align: right; }
+                .text-center { text-align: center; }
+                .total-section { background: linear-gradient(to right, #f97316, #ea580c); color: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
+                .payment-info { background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0; }
+                .bank-info { background: white; padding: 15px; margin: 10px 0; border-left: 4px solid #3b82f6; border-radius: 4px; }
+                .logo { max-width: 150px; height: auto; }
+                @media print {
+                  body { margin: 0; }
+                  .no-print { display: none; }
+                }
+              </style>
+            </head>
+            <body>
+              <div class="invoice-container">
+                ${element.innerHTML}
+              </div>
+            </body>
+          </html>
+        `)
+        printWindow.document.close()
+
+        // Wait for content to load then print
+        setTimeout(() => {
+          printWindow.print()
+          printWindow.close()
+        }, 500)
       }
 
-      html2pdf()
-        .set(opt)
-        .from(element)
-        .save()
-        .then(() => {
-          // Show interactive elements back after PDF generation
-          interactiveElements.forEach((el) => {
-            ;(el as HTMLElement).style.display = ""
-          })
-          alert("PDF berhasil diunduh!")
-        })
-        .catch((error) => {
-          console.error("Error generating PDF:", error)
-          alert("Gagal mengunduh PDF")
-          // Show interactive elements back even if there's an error
-          interactiveElements.forEach((el) => {
-            ;(el as HTMLElement).style.display = ""
-          })
-        })
+      // Show interactive elements back
+      interactiveElements.forEach((el) => {
+        ;(el as HTMLElement).style.display = ""
+      })
     }
   }
 
@@ -207,6 +290,7 @@ export default function Home() {
   }
 
   const grandTotal = invoiceData.items.reduce((sum, item) => sum + item.total, 0)
+  const remainingBalance = grandTotal - invoiceData.dpAmount
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-orange-100">
@@ -399,6 +483,46 @@ export default function Home() {
           </CardContent>
         </Card>
 
+        {/* DP Payment Section */}
+        <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
+          <CardHeader className="bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-t-lg">
+            <CardTitle className="flex items-center gap-2">
+              <CreditCard className="w-5 h-5" />
+              Pembayaran DP (Down Payment)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="dpAmount" className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  <CreditCard className="w-4 h-4" />
+                  Jumlah DP
+                </Label>
+                <Input
+                  id="dpAmount"
+                  type="number"
+                  min={0}
+                  max={grandTotal}
+                  placeholder="Masukkan jumlah DP"
+                  value={invoiceData.dpAmount}
+                  onChange={(e) => setInvoiceData({ ...invoiceData, dpAmount: Number.parseInt(e.target.value) || 0 })}
+                  className="border-2 border-gray-200 focus:border-purple-400 transition-colors"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold text-gray-700">Total Invoice</Label>
+                <div className="p-3 bg-gray-100 rounded-lg font-semibold text-lg">{formatCurrency(grandTotal)}</div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold text-gray-700">Sisa Pembayaran</Label>
+                <div className="p-3 bg-orange-100 rounded-lg font-semibold text-lg text-orange-600">
+                  {formatCurrency(remainingBalance)}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Invoice Preview */}
         <Card className="shadow-xl border-0 bg-white">
           <CardHeader className="bg-gradient-to-r from-gray-700 to-gray-800 text-white rounded-t-lg">
@@ -414,7 +538,7 @@ export default function Home() {
                     alt="ADINA KAOS Logo"
                     width={120}
                     height={80}
-                    className="object-contain"
+                    className="object-contain logo"
                   />
                   <div>
                     <p className="text-gray-600 font-medium">Solo - Jawa Tengah</p>
@@ -491,10 +615,41 @@ export default function Home() {
                 </Table>
               </div>
 
-              {/* Total */}
-              <div className="flex justify-end mb-8">
-                <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white p-6 rounded-lg shadow-lg">
-                  <div className="text-3xl font-bold">Grand Total: {formatCurrency(grandTotal)}</div>
+              {/* Total Section with DP */}
+              <div className="mb-8 space-y-4">
+                <div className="flex justify-end">
+                  <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white p-6 rounded-lg shadow-lg min-w-80">
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center text-xl">
+                        <span>Subtotal:</span>
+                        <span className="font-bold">{formatCurrency(grandTotal)}</span>
+                      </div>
+                      {invoiceData.dpAmount > 0 && (
+                        <>
+                          <div className="border-t border-orange-300 pt-2">
+                            <div className="flex justify-between items-center text-lg">
+                              <span>DP Dibayar:</span>
+                              <span className="font-semibold">- {formatCurrency(invoiceData.dpAmount)}</span>
+                            </div>
+                          </div>
+                          <div className="border-t border-orange-300 pt-2">
+                            <div className="flex justify-between items-center text-2xl font-bold">
+                              <span>Sisa Bayar:</span>
+                              <span>{formatCurrency(remainingBalance)}</span>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                      {invoiceData.dpAmount === 0 && (
+                        <div className="border-t border-orange-300 pt-2">
+                          <div className="flex justify-between items-center text-2xl font-bold">
+                            <span>Total Bayar:</span>
+                            <span>{formatCurrency(grandTotal)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -509,21 +664,35 @@ export default function Home() {
               )}
 
               {/* Payment Information */}
-              <div className="border-t pt-6 bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-lg">
+              <div className="border-t pt-6 bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-lg payment-info">
                 <h4 className="font-bold mb-4 text-lg text-gray-800">Informasi Pembayaran</h4>
                 <div className="space-y-3">
-                  <p className="font-semibold text-gray-700">Info pembayaran dapat ditransfer ke:</p>
+                  <p className="font-semibold text-gray-700">
+                    {invoiceData.dpAmount > 0 && remainingBalance > 0
+                      ? "Sisa pembayaran dapat ditransfer ke:"
+                      : "Info pembayaran dapat ditransfer ke:"}
+                  </p>
                   <p className="text-lg font-bold text-blue-600">Maria Goreti Nugrahardina</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-blue-500">
+                    <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-blue-500 bank-info">
                       <p className="font-semibold text-gray-700">Bank MANDIRI</p>
                       <p className="text-xl font-mono font-bold text-blue-600">1360004826878</p>
                     </div>
-                    <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-green-500">
+                    <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-green-500 bank-info">
                       <p className="font-semibold text-gray-700">Bank BRI</p>
                       <p className="text-xl font-mono font-bold text-green-600">0097 0112 2186 505</p>
                     </div>
                   </div>
+                  {invoiceData.dpAmount > 0 && remainingBalance > 0 && (
+                    <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
+                      <p className="font-semibold text-yellow-800">
+                        DP sebesar {formatCurrency(invoiceData.dpAmount)} telah dibayar.
+                      </p>
+                      <p className="font-semibold text-yellow-800">
+                        Sisa pembayaran: {formatCurrency(remainingBalance)}
+                      </p>
+                    </div>
+                  )}
                   <p className="text-sm text-gray-600 bg-white p-3 rounded border-l-4 border-yellow-400">
                     Setelah melakukan transfer dapat mengirimkan bukti transfer
                   </p>
@@ -559,10 +728,18 @@ export default function Home() {
             <div className="flex gap-4">
               <Button
                 onClick={generatePDF}
-                className="bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-800 hover:to-gray-900 text-white shadow-lg transform hover:scale-105 transition-all duration-200"
+                disabled={isGeneratingPDF}
+                className="bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-800 hover:to-gray-900 text-white shadow-lg transform hover:scale-105 transition-all duration-200 disabled:opacity-50"
               >
                 <Download className="w-4 h-4 mr-2" />
-                Unduh PDF
+                {isGeneratingPDF ? "Membuat PDF..." : "Unduh PDF"}
+              </Button>
+              <Button
+                onClick={generatePDFPrint}
+                className="bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white shadow-lg transform hover:scale-105 transition-all duration-200"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Print PDF
               </Button>
               <Button
                 onClick={handleSave}
