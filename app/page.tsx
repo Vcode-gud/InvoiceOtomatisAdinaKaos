@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Trash2, Download, Save, Plus, User, MapPin, Phone, ShoppingBag, CreditCard } from "lucide-react"
+import { Trash2, Download, Save, Plus, User, MapPin, Phone, ShoppingBag, CreditCard, Shield } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import Image from "next/image"
 
 const produkList = {
@@ -84,6 +85,8 @@ export default function Home() {
   })
 
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
+  const [enableWatermark, setEnableWatermark] = useState(true)
+  const [watermarkOpacity, setWatermarkOpacity] = useState(0.1)
 
   useEffect(() => {
     const now = new Date()
@@ -137,8 +140,18 @@ export default function Home() {
     setIsGeneratingPDF(true)
 
     try {
-      // Dynamic import html2pdf
-      const html2pdf = (await import("html2pdf.js")).default
+      // Try to import html2pdf dynamically
+      let html2pdf
+      try {
+        const html2pdfModule = await import("html2pdf.js")
+        html2pdf = html2pdfModule.default || html2pdfModule
+      } catch (importError) {
+        console.error("Failed to import html2pdf:", importError)
+        // Fallback to print method
+        generatePDFPrint()
+        setIsGeneratingPDF(false)
+        return
+      }
 
       const element = document.getElementById("invoice")
       if (element) {
@@ -148,8 +161,11 @@ export default function Home() {
           ;(el as HTMLElement).style.display = "none"
         })
 
-        // Clone the element to avoid modifying the original
-        const clonedElement = element.cloneNode(true) as HTMLElement
+        // Show watermark if enabled
+        const watermarkElements = element.querySelectorAll(".pdf-watermark")
+        watermarkElements.forEach((el) => {
+          ;(el as HTMLElement).style.display = enableWatermark ? "block" : "none"
+        })
 
         // Configure PDF options
         const opt = {
@@ -173,19 +189,30 @@ export default function Home() {
           },
         }
 
-        // Generate PDF
-        await html2pdf().set(opt).from(clonedElement).save()
+        try {
+          // Generate PDF using html2pdf
+          await html2pdf().set(opt).from(element).save()
+          alert("PDF berhasil diunduh!")
+        } catch (pdfError) {
+          console.error("PDF generation failed:", pdfError)
+          // Fallback to print method
+          generatePDFPrint()
+        }
 
         // Show interactive elements back
         interactiveElements.forEach((el) => {
           ;(el as HTMLElement).style.display = ""
         })
 
-        alert("PDF berhasil diunduh!")
+        // Hide watermark elements back for screen view
+        watermarkElements.forEach((el) => {
+          ;(el as HTMLElement).style.display = "none"
+        })
       }
     } catch (error) {
       console.error("Error generating PDF:", error)
-      alert("Gagal mengunduh PDF. Silakan coba lagi.")
+      // Fallback to print method
+      generatePDFPrint()
     } finally {
       setIsGeneratingPDF(false)
     }
@@ -209,49 +236,170 @@ export default function Home() {
       // Create a new window for printing
       const printWindow = window.open("", "_blank")
       if (printWindow) {
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>Invoice ${invoiceData.invoiceNumber}</title>
-              <style>
-                body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-                .invoice-container { max-width: 800px; margin: 0 auto; }
-                table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                th { background-color: #f5f5f5; font-weight: bold; }
-                .text-right { text-align: right; }
-                .text-center { text-align: center; }
-                .total-section { background: linear-gradient(to right, #f97316, #ea580c); color: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
-                .payment-info { background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0; }
-                .bank-info { background: white; padding: 15px; margin: 10px 0; border-left: 4px solid #3b82f6; border-radius: 4px; }
-                .logo { max-width: 150px; height: auto; }
-                @media print {
-                  body { margin: 0; }
-                  .no-print { display: none; }
-                }
-              </style>
-            </head>
-            <body>
-              <div class="invoice-container">
-                ${element.innerHTML}
-              </div>
-            </body>
-          </html>
-        `)
-        printWindow.document.close()
+        const watermarkStyle = enableWatermark
+          ? `
+          .watermark {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-45deg);
+            font-size: 120px;
+            font-weight: bold;
+            color: rgba(249, 115, 22, ${watermarkOpacity});
+            z-index: -1;
+            pointer-events: none;
+            user-select: none;
+            font-family: Arial, sans-serif;
+          }
+          .watermark-logo {
+            position: fixed;
+            top: 20%;
+            right: 10%;
+            opacity: ${watermarkOpacity};
+            z-index: -1;
+            pointer-events: none;
+            user-select: none;
+            transform: rotate(-15deg);
+          }
+          .watermark-logo img {
+            width: 200px;
+            height: auto;
+          }
+          `
+          : ""
 
-        // Wait for content to load then print
-        setTimeout(() => {
-          printWindow.print()
-          printWindow.close()
-        }, 500)
+        printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Invoice ${invoiceData.invoiceNumber}</title>
+            <style>
+              body { 
+                font-family: Arial, sans-serif; 
+                margin: 0; 
+                padding: 20px; 
+                color: #333;
+                position: relative;
+              }
+              .invoice-container { 
+                max-width: 800px; 
+                margin: 0 auto;
+                position: relative;
+                z-index: 1;
+              }
+              table { 
+                width: 100%; 
+                border-collapse: collapse; 
+                margin: 20px 0; 
+              }
+              th, td { 
+                border: 1px solid #ddd; 
+                padding: 12px 8px; 
+                text-align: left; 
+                font-size: 14px;
+              }
+              th { 
+                background-color: #f5f5f5; 
+                font-weight: bold; 
+              }
+              .text-right { text-align: right; }
+              .text-center { text-align: center; }
+              .total-section { 
+                background: linear-gradient(to right, #f97316, #ea580c); 
+                color: white; 
+                padding: 20px; 
+                border-radius: 8px; 
+                margin: 20px 0; 
+                text-align: right;
+              }
+              .payment-info { 
+                background: #f0f9ff; 
+                padding: 20px; 
+                border-radius: 8px; 
+                margin: 20px 0; 
+              }
+              .bank-info { 
+                background: white; 
+                padding: 15px; 
+                margin: 10px 0; 
+                border-left: 4px solid #3b82f6; 
+                border-radius: 4px; 
+                display: inline-block;
+                width: 45%;
+                margin-right: 2%;
+              }
+              .logo { 
+                max-width: 120px; 
+                height: auto; 
+              }
+              .header-section {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 30px;
+                border-bottom: 2px solid #ddd;
+                padding-bottom: 20px;
+              }
+              .company-info {
+                display: flex;
+                align-items: center;
+                gap: 15px;
+              }
+              .invoice-title {
+                text-align: right;
+              }
+              .customer-info {
+                background: #f9f9f9;
+                padding: 15px;
+                border-radius: 8px;
+                margin-bottom: 20px;
+              }
+              .pdf-hide { display: none !important; }
+              ${watermarkStyle}
+              @media print {
+                body { margin: 0; }
+                .no-print { display: none; }
+              }
+            </style>
+          </head>
+          <body>
+            ${
+              enableWatermark
+                ? `
+            <div class="watermark">ADINA KAOS</div>
+            <div class="watermark-logo">
+              <img src="/images/adina-logo.png" alt="ADINA KAOS Watermark" />
+            </div>
+            `
+                : ""
+            }
+            <div class="invoice-container">
+              ${element.innerHTML}
+            </div>
+            <script>
+              window.onload = function() {
+                setTimeout(function() {
+                  window.print();
+                  setTimeout(function() {
+                    window.close();
+                  }, 100);
+                }, 500);
+              }
+            </script>
+          </body>
+        </html>
+      `)
+        printWindow.document.close()
+      } else {
+        alert("Pop-up diblokir. Silakan izinkan pop-up untuk fitur print PDF.")
       }
 
       // Show interactive elements back
-      interactiveElements.forEach((el) => {
-        ;(el as HTMLElement).style.display = ""
-      })
+      setTimeout(() => {
+        interactiveElements.forEach((el) => {
+          ;(el as HTMLElement).style.display = ""
+        })
+      }, 1000)
     }
   }
 
@@ -523,182 +671,286 @@ export default function Home() {
           </CardContent>
         </Card>
 
+        {/* PDF Watermark Settings */}
+        <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
+          <CardHeader className="bg-gradient-to-r from-indigo-500 to-indigo-600 text-white rounded-t-lg">
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5" />
+              Pengaturan Watermark PDF
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="enableWatermark"
+                    checked={enableWatermark}
+                    onCheckedChange={(checked) => setEnableWatermark(checked as boolean)}
+                  />
+                  <Label htmlFor="enableWatermark" className="text-sm font-semibold text-gray-700">
+                    Aktifkan Watermark
+                  </Label>
+                </div>
+                <p className="text-sm text-gray-600">
+                  Menambahkan watermark ADINA KAOS pada PDF untuk melindungi dokumen
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="watermarkOpacity" className="text-sm font-semibold text-gray-700">
+                  Transparansi Watermark
+                </Label>
+                <Input
+                  id="watermarkOpacity"
+                  type="range"
+                  min="0.05"
+                  max="0.3"
+                  step="0.05"
+                  value={watermarkOpacity}
+                  onChange={(e) => setWatermarkOpacity(Number.parseFloat(e.target.value))}
+                  disabled={!enableWatermark}
+                  className="w-full"
+                />
+                <div className="text-sm text-gray-600 text-center">{Math.round(watermarkOpacity * 100)}% Opacity</div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold text-gray-700">Preview Watermark</Label>
+                <div className="p-4 bg-gray-100 rounded-lg relative overflow-hidden h-20">
+                  {enableWatermark && (
+                    <>
+                      <div
+                        className="absolute inset-0 flex items-center justify-center transform rotate-12 text-orange-500 font-bold text-lg pointer-events-none select-none"
+                        style={{ opacity: watermarkOpacity * 3 }}
+                      >
+                        ADINA KAOS
+                      </div>
+                      <div
+                        className="absolute top-1 right-1 transform rotate-12 pointer-events-none select-none"
+                        style={{ opacity: watermarkOpacity * 3 }}
+                      >
+                        <Image
+                          src="/images/adina-logo.png"
+                          alt="Logo"
+                          width={40}
+                          height={24}
+                          className="object-contain"
+                        />
+                      </div>
+                    </>
+                  )}
+                  <div className="relative z-10 text-sm text-gray-700">Sample invoice content...</div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Invoice Preview */}
         <Card className="shadow-xl border-0 bg-white">
           <CardHeader className="bg-gradient-to-r from-gray-700 to-gray-800 text-white rounded-t-lg">
             <CardTitle>Preview Invoice</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <div id="invoice" className="bg-white p-8">
-              {/* Invoice Header */}
-              <div className="flex justify-between items-start mb-8 border-b pb-6">
-                <div className="flex items-center gap-4">
-                  <Image
-                    src="/images/adina-logo.png"
-                    alt="ADINA KAOS Logo"
-                    width={120}
-                    height={80}
-                    className="object-contain logo"
-                  />
-                  <div>
-                    <p className="text-gray-600 font-medium">Solo - Jawa Tengah</p>
-                    <p className="text-gray-600">No. Handphone: 0856-4118-9772</p>
+            <div id="invoice" className="bg-white p-8 relative">
+              {/* PDF Watermark Elements (hidden by default, shown only in PDF) */}
+              <div
+                className="pdf-watermark absolute inset-0 flex items-center justify-center transform rotate-45 text-orange-500 font-bold pointer-events-none select-none z-0"
+                style={{
+                  fontSize: "120px",
+                  opacity: watermarkOpacity,
+                  display: "none",
+                }}
+              >
+                ADINA KAOS
+              </div>
+              <div
+                className="pdf-watermark absolute top-1/4 right-1/4 transform rotate-12 pointer-events-none select-none z-0"
+                style={{
+                  opacity: watermarkOpacity,
+                  display: "none",
+                }}
+              >
+                <Image
+                  src="/images/adina-logo.png"
+                  alt="Watermark Logo"
+                  width={200}
+                  height={120}
+                  className="object-contain"
+                />
+              </div>
+
+              {/* Invoice Content */}
+              <div className="relative z-10">
+                {/* Invoice Header */}
+                <div className="flex justify-between items-start mb-8 border-b pb-6">
+                  <div className="flex items-center gap-4">
+                    <Image
+                      src="/images/adina-logo.png"
+                      alt="ADINA KAOS Logo"
+                      width={120}
+                      height={80}
+                      className="object-contain logo"
+                    />
+                    <div>
+                      <p className="text-gray-600 font-medium">Solo - Jawa Tengah</p>
+                      <p className="text-gray-600">No. Handphone: 0856-4118-9772</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <h3 className="text-3xl font-bold mb-2 text-gray-800">INVOICE</h3>
+                    <p className="text-xl font-semibold text-orange-600">#{invoiceData.invoiceNumber}</p>
+                    <p className="text-gray-600">Tanggal: {new Date(invoiceData.date).toLocaleDateString("id-ID")}</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <h3 className="text-3xl font-bold mb-2 text-gray-800">INVOICE</h3>
-                  <p className="text-xl font-semibold text-orange-600">#{invoiceData.invoiceNumber}</p>
-                  <p className="text-gray-600">Tanggal: {new Date(invoiceData.date).toLocaleDateString("id-ID")}</p>
+
+                {/* Customer Info */}
+                <div className="mb-8 bg-gray-50 p-4 rounded-lg">
+                  <h4 className="font-semibold mb-3 text-gray-800">Kepada:</h4>
+                  <div className="space-y-1">
+                    <p className="font-medium text-lg">{invoiceData.customer || "Nama Pelanggan"}</p>
+                    <p className="text-gray-600 flex items-center gap-2">
+                      <MapPin className="w-4 h-4" />
+                      {invoiceData.address || "Alamat Pelanggan"}
+                    </p>
+                    <p className="text-gray-600 flex items-center gap-2">
+                      <Phone className="w-4 h-4" />
+                      {invoiceData.phone || "No. Handphone"}
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              {/* Customer Info */}
-              <div className="mb-8 bg-gray-50 p-4 rounded-lg">
-                <h4 className="font-semibold mb-3 text-gray-800">Kepada:</h4>
-                <div className="space-y-1">
-                  <p className="font-medium text-lg">{invoiceData.customer || "Nama Pelanggan"}</p>
-                  <p className="text-gray-600 flex items-center gap-2">
-                    <MapPin className="w-4 h-4" />
-                    {invoiceData.address || "Alamat Pelanggan"}
-                  </p>
-                  <p className="text-gray-600 flex items-center gap-2">
-                    <Phone className="w-4 h-4" />
-                    {invoiceData.phone || "No. Handphone"}
-                  </p>
+                {/* Items Table */}
+                <div className="mb-8">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-gray-100">
+                        <TableHead className="font-semibold">Produk</TableHead>
+                        <TableHead className="font-semibold">Warna</TableHead>
+                        <TableHead className="font-semibold">Ukuran</TableHead>
+                        <TableHead className="text-center font-semibold">Qty</TableHead>
+                        <TableHead className="text-right font-semibold">Harga Satuan</TableHead>
+                        <TableHead className="text-right font-semibold">Total</TableHead>
+                        <TableHead className="w-12 pdf-hide"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {invoiceData.items.map((item, index) => (
+                        <TableRow key={index} className="hover:bg-gray-50">
+                          <TableCell className="font-medium">{item.product}</TableCell>
+                          <TableCell>{item.color}</TableCell>
+                          <TableCell>{item.size}</TableCell>
+                          <TableCell className="text-center">{item.quantity}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
+                          <TableCell className="text-right font-semibold">{formatCurrency(item.total)}</TableCell>
+                          <TableCell className="pdf-hide">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemoveItem(index)}
+                              className="text-red-600 hover:text-red-800 hover:bg-red-50"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {invoiceData.items.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-gray-500 py-12">
+                            <ShoppingBag className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                            Belum ada item yang ditambahkan
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
                 </div>
-              </div>
 
-              {/* Items Table */}
-              <div className="mb-8">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-gray-100">
-                      <TableHead className="font-semibold">Produk</TableHead>
-                      <TableHead className="font-semibold">Warna</TableHead>
-                      <TableHead className="font-semibold">Ukuran</TableHead>
-                      <TableHead className="text-center font-semibold">Qty</TableHead>
-                      <TableHead className="text-right font-semibold">Harga Satuan</TableHead>
-                      <TableHead className="text-right font-semibold">Total</TableHead>
-                      <TableHead className="w-12 pdf-hide"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {invoiceData.items.map((item, index) => (
-                      <TableRow key={index} className="hover:bg-gray-50">
-                        <TableCell className="font-medium">{item.product}</TableCell>
-                        <TableCell>{item.color}</TableCell>
-                        <TableCell>{item.size}</TableCell>
-                        <TableCell className="text-center">{item.quantity}</TableCell>
-                        <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
-                        <TableCell className="text-right font-semibold">{formatCurrency(item.total)}</TableCell>
-                        <TableCell className="pdf-hide">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleRemoveItem(index)}
-                            className="text-red-600 hover:text-red-800 hover:bg-red-50"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {invoiceData.items.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center text-gray-500 py-12">
-                          <ShoppingBag className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                          Belum ada item yang ditambahkan
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {/* Total Section with DP */}
-              <div className="mb-8 space-y-4">
-                <div className="flex justify-end">
-                  <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white p-6 rounded-lg shadow-lg min-w-80">
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center text-xl">
-                        <span>Subtotal:</span>
-                        <span className="font-bold">{formatCurrency(grandTotal)}</span>
-                      </div>
-                      {invoiceData.dpAmount > 0 && (
-                        <>
-                          <div className="border-t border-orange-300 pt-2">
-                            <div className="flex justify-between items-center text-lg">
-                              <span>DP Dibayar:</span>
-                              <span className="font-semibold">- {formatCurrency(invoiceData.dpAmount)}</span>
+                {/* Total Section with DP */}
+                <div className="mb-8 space-y-4">
+                  <div className="flex justify-end">
+                    <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white p-6 rounded-lg shadow-lg min-w-80">
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center text-xl">
+                          <span>Subtotal:</span>
+                          <span className="font-bold">{formatCurrency(grandTotal)}</span>
+                        </div>
+                        {invoiceData.dpAmount > 0 && (
+                          <>
+                            <div className="border-t border-orange-300 pt-2">
+                              <div className="flex justify-between items-center text-lg">
+                                <span>DP Dibayar:</span>
+                                <span className="font-semibold">- {formatCurrency(invoiceData.dpAmount)}</span>
+                              </div>
                             </div>
-                          </div>
+                            <div className="border-t border-orange-300 pt-2">
+                              <div className="flex justify-between items-center text-2xl font-bold">
+                                <span>Sisa Bayar:</span>
+                                <span>{formatCurrency(remainingBalance)}</span>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                        {invoiceData.dpAmount === 0 && (
                           <div className="border-t border-orange-300 pt-2">
                             <div className="flex justify-between items-center text-2xl font-bold">
-                              <span>Sisa Bayar:</span>
-                              <span>{formatCurrency(remainingBalance)}</span>
+                              <span>Total Bayar:</span>
+                              <span>{formatCurrency(grandTotal)}</span>
                             </div>
                           </div>
-                        </>
-                      )}
-                      {invoiceData.dpAmount === 0 && (
-                        <div className="border-t border-orange-300 pt-2">
-                          <div className="flex justify-between items-center text-2xl font-bold">
-                            <span>Total Bayar:</span>
-                            <span>{formatCurrency(grandTotal)}</span>
-                          </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Notes */}
-              {invoiceData.note && (
-                <div className="border-t pt-6 mb-8">
-                  <h4 className="font-semibold mb-3 text-gray-800">Catatan:</h4>
-                  <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
-                    <p className="text-gray-700">{invoiceData.note}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Payment Information */}
-              <div className="border-t pt-6 bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-lg payment-info">
-                <h4 className="font-bold mb-4 text-lg text-gray-800">Informasi Pembayaran</h4>
-                <div className="space-y-3">
-                  <p className="font-semibold text-gray-700">
-                    {invoiceData.dpAmount > 0 && remainingBalance > 0
-                      ? "Sisa pembayaran dapat ditransfer ke:"
-                      : "Info pembayaran dapat ditransfer ke:"}
-                  </p>
-                  <p className="text-lg font-bold text-blue-600">Maria Goreti Nugrahardina</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-blue-500 bank-info">
-                      <p className="font-semibold text-gray-700">Bank MANDIRI</p>
-                      <p className="text-xl font-mono font-bold text-blue-600">1360004826878</p>
-                    </div>
-                    <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-green-500 bank-info">
-                      <p className="font-semibold text-gray-700">Bank BRI</p>
-                      <p className="text-xl font-mono font-bold text-green-600">0097 0112 2186 505</p>
-                    </div>
-                  </div>
-                  {invoiceData.dpAmount > 0 && remainingBalance > 0 && (
+                {/* Notes */}
+                {invoiceData.note && (
+                  <div className="border-t pt-6 mb-8">
+                    <h4 className="font-semibold mb-3 text-gray-800">Catatan:</h4>
                     <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
-                      <p className="font-semibold text-yellow-800">
-                        DP sebesar {formatCurrency(invoiceData.dpAmount)} telah dibayar.
-                      </p>
-                      <p className="font-semibold text-yellow-800">
-                        Sisa pembayaran: {formatCurrency(remainingBalance)}
-                      </p>
+                      <p className="text-gray-700">{invoiceData.note}</p>
                     </div>
-                  )}
-                  <p className="text-sm text-gray-600 bg-white p-3 rounded border-l-4 border-yellow-400">
-                    Setelah melakukan transfer dapat mengirimkan bukti transfer
-                  </p>
-                  <p className="font-bold text-center text-xl text-orange-600 bg-white p-4 rounded-lg shadow-sm">
-                    TERIMA KASIH
-                  </p>
+                  </div>
+                )}
+
+                {/* Payment Information */}
+                <div className="border-t pt-6 bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-lg payment-info">
+                  <h4 className="font-bold mb-4 text-lg text-gray-800">Informasi Pembayaran</h4>
+                  <div className="space-y-3">
+                    <p className="font-semibold text-gray-700">
+                      {invoiceData.dpAmount > 0 && remainingBalance > 0
+                        ? "Sisa pembayaran dapat ditransfer ke:"
+                        : "Info pembayaran dapat ditransfer ke:"}
+                    </p>
+                    <p className="text-lg font-bold text-blue-600">Maria Goreti Nugrahardina</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-blue-500 bank-info">
+                        <p className="font-semibold text-gray-700">Bank MANDIRI</p>
+                        <p className="text-xl font-mono font-bold text-blue-600">1360004826878</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-green-500 bank-info">
+                        <p className="font-semibold text-gray-700">Bank BRI</p>
+                        <p className="text-xl font-mono font-bold text-green-600">0097 0112 2186 505</p>
+                      </div>
+                    </div>
+                    {invoiceData.dpAmount > 0 && remainingBalance > 0 && (
+                      <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded">
+                        <p className="font-semibold text-yellow-800">
+                          DP sebesar {formatCurrency(invoiceData.dpAmount)} telah dibayar.
+                        </p>
+                        <p className="font-semibold text-yellow-800">
+                          Sisa pembayaran: {formatCurrency(remainingBalance)}
+                        </p>
+                      </div>
+                    )}
+                    <p className="text-sm text-gray-600 bg-white p-3 rounded border-l-4 border-yellow-400">
+                      Setelah melakukan transfer dapat mengirimkan bukti transfer
+                    </p>
+                    <p className="font-bold text-center text-xl text-orange-600 bg-white p-4 rounded-lg shadow-sm">
+                      TERIMA KASIH
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -751,6 +1003,15 @@ export default function Home() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Developer Footer */}
+        <div className="mt-12 py-8 border-t border-gray-200 bg-white/60 backdrop-blur-sm rounded-lg">
+          <div className="text-center space-y-2">
+            <p className="text-sm text-gray-600">Aplikasi Invoice Otomatis ini dikembangkan oleh</p>
+            <p className="text-lg font-bold text-orange-600">Bikin Teknologi Asik - SMG</p>
+            <p className="text-xs text-gray-500">© 2025 - Solusi teknologi untuk kemudahan bisnis Anda</p>
+          </div>
+        </div>
       </div>
     </div>
   )
