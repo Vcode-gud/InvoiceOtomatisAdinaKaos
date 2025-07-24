@@ -1,8 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { writeFile, mkdir, readFile, access } from "fs/promises"
-import { existsSync, mkdirSync } from "fs"
+import { writeFile, mkdir, readFile } from "fs/promises"
+import { existsSync, mkdirSync, writeFileSync, readFileSync, statSync } from "fs"
 import path from "path"
-import { constants } from "fs"
 
 interface InvoiceItem {
   product: string
@@ -32,62 +31,212 @@ interface InvoiceData {
   }>
 }
 
-// Helper function to ensure directory exists
-async function ensureDirectoryExists(dirPath: string) {
+// Enhanced directory creation with multiple fallback strategies
+async function ensureDirectoryExists(dirPath: string): Promise<boolean> {
+  console.log(`Attempting to ensure directory exists: ${dirPath}`)
+
+  // Strategy 1: Check if directory already exists (sync)
   try {
-    await access(dirPath, constants.F_OK)
-  } catch (error) {
-    try {
-      await mkdir(dirPath, { recursive: true })
-      console.log(`Created directory: ${dirPath}`)
-    } catch (mkdirError) {
-      // Fallback to sync method
-      try {
-        if (!existsSync(dirPath)) {
-          mkdirSync(dirPath, { recursive: true })
-          console.log(`Created directory (sync): ${dirPath}`)
-        }
-      } catch (syncError) {
-        console.error(`Failed to create directory: ${dirPath}`, syncError)
-        throw new Error(`Cannot create directory: ${dirPath}`)
+    if (existsSync(dirPath)) {
+      const stats = statSync(dirPath)
+      if (stats.isDirectory()) {
+        console.log(`Directory already exists: ${dirPath}`)
+        return true
       }
     }
-  }
-}
-
-// Helper function to safely write file
-async function safeWriteFile(filePath: string, content: string) {
-  try {
-    await writeFile(filePath, content, "utf-8")
-    return true
   } catch (error) {
-    console.error(`Failed to write file: ${filePath}`, error)
+    console.log(`Sync check failed, continuing with async: ${error}`)
+  }
 
-    // Try alternative approach with different encoding
-    try {
-      await writeFile(filePath, content, { encoding: "utf8", flag: "w" })
+  // Strategy 2: Try async mkdir with recursive
+  try {
+    await mkdir(dirPath, { recursive: true, mode: 0o755 })
+    console.log(`Directory created successfully (async): ${dirPath}`)
+    return true
+  } catch (asyncError) {
+    console.log(`Async mkdir failed: ${asyncError}`)
+  }
+
+  // Strategy 3: Try sync mkdir as fallback
+  try {
+    mkdirSync(dirPath, { recursive: true, mode: 0o755 })
+    console.log(`Directory created successfully (sync): ${dirPath}`)
+    return true
+  } catch (syncError) {
+    console.log(`Sync mkdir failed: ${syncError}`)
+  }
+
+  // Strategy 4: Try creating parent directories step by step
+  try {
+    const pathParts = dirPath.split(path.sep)
+    let currentPath = ""
+
+    for (const part of pathParts) {
+      if (!part) continue
+      currentPath = currentPath ? path.join(currentPath, part) : part
+
+      if (!existsSync(currentPath)) {
+        try {
+          mkdirSync(currentPath, { mode: 0o755 })
+          console.log(`Created path segment: ${currentPath}`)
+        } catch (segmentError) {
+          console.log(`Failed to create segment ${currentPath}: ${segmentError}`)
+        }
+      }
+    }
+
+    // Verify final directory exists
+    if (existsSync(dirPath)) {
+      console.log(`Directory created via step-by-step approach: ${dirPath}`)
       return true
-    } catch (retryError) {
-      console.error(`Retry failed for file: ${filePath}`, retryError)
-      throw new Error(`Cannot write file: ${filePath}`)
+    }
+  } catch (stepError) {
+    console.log(`Step-by-step creation failed: ${stepError}`)
+  }
+
+  // Strategy 5: Try alternative paths
+  const alternativePaths = [
+    path.join(process.cwd(), "tmp", "invoices"),
+    path.join(process.cwd(), "public", "data", "invoices"),
+    path.join("/tmp", "adina-invoices"),
+  ]
+
+  for (const altPath of alternativePaths) {
+    try {
+      if (!existsSync(altPath)) {
+        mkdirSync(altPath, { recursive: true, mode: 0o755 })
+      }
+      console.log(`Alternative directory created: ${altPath}`)
+      return true
+    } catch (altError) {
+      console.log(`Alternative path failed ${altPath}: ${altError}`)
     }
   }
+
+  console.error(`All directory creation strategies failed for: ${dirPath}`)
+  return false
 }
 
-// Helper function to safely read file
-async function safeReadFile(filePath: string) {
+// Enhanced file writing with multiple strategies
+async function safeWriteFile(filePath: string, content: string): Promise<boolean> {
+  console.log(`Attempting to write file: ${filePath}`)
+
+  // Strategy 1: Standard async writeFile
+  try {
+    await writeFile(filePath, content, { encoding: "utf8", mode: 0o644 })
+    console.log(`File written successfully (async): ${filePath}`)
+    return true
+  } catch (asyncError) {
+    console.log(`Async write failed: ${asyncError}`)
+  }
+
+  // Strategy 2: Sync writeFile as fallback
+  try {
+    writeFileSync(filePath, content, { encoding: "utf8", mode: 0o644 })
+    console.log(`File written successfully (sync): ${filePath}`)
+    return true
+  } catch (syncError) {
+    console.log(`Sync write failed: ${syncError}`)
+  }
+
+  // Strategy 3: Try with different encoding
+  try {
+    const buffer = Buffer.from(content, "utf8")
+    await writeFile(filePath, buffer, { mode: 0o644 })
+    console.log(`File written successfully (buffer): ${filePath}`)
+    return true
+  } catch (bufferError) {
+    console.log(`Buffer write failed: ${bufferError}`)
+  }
+
+  // Strategy 4: Try alternative file location
+  const dir = path.dirname(filePath)
+  const filename = path.basename(filePath)
+  const alternativeFile = path.join(dir, `backup_${filename}`)
+
+  try {
+    writeFileSync(alternativeFile, content, { encoding: "utf8", mode: 0o644 })
+    console.log(`File written to alternative location: ${alternativeFile}`)
+    return true
+  } catch (altError) {
+    console.log(`Alternative file write failed: ${altError}`)
+  }
+
+  console.error(`All file writing strategies failed for: ${filePath}`)
+  return false
+}
+
+// Enhanced file reading with fallbacks
+async function safeReadFile(filePath: string): Promise<string | null> {
+  console.log(`Attempting to read file: ${filePath}`)
+
+  // Strategy 1: Standard async readFile
   try {
     const content = await readFile(filePath, "utf-8")
+    console.log(`File read successfully (async): ${filePath}`)
     return content
-  } catch (error) {
-    console.error(`Failed to read file: ${filePath}`, error)
-    return null
+  } catch (asyncError) {
+    console.log(`Async read failed: ${asyncError}`)
   }
+
+  // Strategy 2: Sync readFile as fallback
+  try {
+    const content = readFileSync(filePath, "utf-8")
+    console.log(`File read successfully (sync): ${filePath}`)
+    return content
+  } catch (syncError) {
+    console.log(`Sync read failed: ${syncError}`)
+  }
+
+  // Strategy 3: Try backup file
+  const dir = path.dirname(filePath)
+  const filename = path.basename(filePath)
+  const backupFile = path.join(dir, `backup_${filename}`)
+
+  try {
+    if (existsSync(backupFile)) {
+      const content = readFileSync(backupFile, "utf-8")
+      console.log(`Backup file read successfully: ${backupFile}`)
+      return content
+    }
+  } catch (backupError) {
+    console.log(`Backup file read failed: ${backupError}`)
+  }
+
+  console.log(`All file reading strategies failed for: ${filePath}`)
+  return null
+}
+
+// Get appropriate storage directory
+function getStorageDirectory(): string {
+  const possiblePaths = [
+    path.join(process.cwd(), "data", "invoices"),
+    path.join(process.cwd(), "tmp", "invoices"),
+    path.join(process.cwd(), "public", "data", "invoices"),
+    path.join("/tmp", "adina-invoices"),
+  ]
+
+  // Try to find an existing directory first
+  for (const dirPath of possiblePaths) {
+    if (existsSync(dirPath)) {
+      console.log(`Using existing directory: ${dirPath}`)
+      return dirPath
+    }
+  }
+
+  // Return the preferred path for creation
+  console.log(`Will attempt to create: ${possiblePaths[0]}`)
+  return possiblePaths[0]
 }
 
 export async function POST(request: NextRequest) {
   try {
     console.log("=== INVOICE SAVE REQUEST START ===")
+    console.log("Environment:", {
+      nodeEnv: process.env.NODE_ENV,
+      platform: process.platform,
+      cwd: process.cwd(),
+    })
 
     let invoiceData: InvoiceData
     try {
@@ -124,27 +273,79 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create invoices directory structure
-    const dataDir = path.join(process.cwd(), "data")
-    const invoicesDir = path.join(dataDir, "invoices")
+    // Get storage directory with fallback options
+    const invoicesDir = getStorageDirectory()
+    console.log("Target storage directory:", invoicesDir)
 
-    console.log("Ensuring directories exist:", {
-      dataDir,
-      invoicesDir,
-    })
+    // Ensure directory exists with enhanced error handling
+    const dirCreated = await ensureDirectoryExists(invoicesDir)
+    if (!dirCreated) {
+      console.error("Failed to create storage directory after all attempts")
 
-    try {
-      await ensureDirectoryExists(dataDir)
-      await ensureDirectoryExists(invoicesDir)
-    } catch (dirError) {
-      console.error("Directory creation failed:", dirError)
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Gagal membuat direktori penyimpanan. Silakan hubungi administrator.",
-        },
-        { status: 500 },
-      )
+      // Try in-memory storage as last resort (for serverless environments)
+      console.log("Attempting in-memory storage fallback...")
+
+      try {
+        // Store in a simple in-memory structure (this is a fallback for extreme cases)
+        const memoryStorage = globalThis as any
+        if (!memoryStorage.invoiceStorage) {
+          memoryStorage.invoiceStorage = new Map()
+        }
+
+        const enrichedData = {
+          ...invoiceData,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          grandTotal: invoiceData.items.reduce((sum, item) => sum + (item.total || 0), 0),
+          itemCount: invoiceData.items.length,
+          paymentStatus:
+            invoiceData.dpAmount >= invoiceData.items.reduce((sum, item) => sum + (item.total || 0), 0)
+              ? "paid"
+              : invoiceData.dpAmount > 0
+                ? "partial"
+                : "unpaid",
+          paidAmount: invoiceData.dpAmount || 0,
+          remainingAmount: Math.max(
+            invoiceData.items.reduce((sum, item) => sum + (item.total || 0), 0) - (invoiceData.dpAmount || 0),
+            0,
+          ),
+          paymentHistory:
+            invoiceData.dpAmount > 0
+              ? [
+                  {
+                    date: new Date().toISOString(),
+                    amount: invoiceData.dpAmount,
+                    method: "DP",
+                    note: "Pembayaran DP awal",
+                  },
+                ]
+              : [],
+        }
+
+        memoryStorage.invoiceStorage.set(invoiceData.invoiceNumber, enrichedData)
+
+        console.log("Invoice stored in memory as fallback")
+
+        return NextResponse.json({
+          success: true,
+          message: "Invoice berhasil disimpan (mode sementara)",
+          invoiceNumber: invoiceData.invoiceNumber,
+          grandTotal: enrichedData.grandTotal,
+          paymentStatus: enrichedData.paymentStatus,
+          remainingAmount: enrichedData.remainingAmount,
+          warning: "Data disimpan sementara. Untuk penyimpanan permanen, silakan hubungi administrator.",
+        })
+      } catch (memoryError) {
+        console.error("Memory storage fallback also failed:", memoryError)
+        return NextResponse.json(
+          {
+            success: false,
+            message: "Sistem penyimpanan tidak tersedia. Silakan coba lagi nanti atau hubungi administrator.",
+            technicalInfo: process.env.NODE_ENV === "development" ? "All storage methods failed" : undefined,
+          },
+          { status: 500 },
+        )
+      }
     }
 
     // Calculate totals
@@ -202,19 +403,19 @@ export async function POST(request: NextRequest) {
 
     console.log("Saving individual invoice file:", filePath)
 
-    try {
-      await safeWriteFile(filePath, JSON.stringify(enrichedInvoiceData, null, 2))
-      console.log("Individual invoice file saved successfully")
-    } catch (fileError) {
-      console.error("Failed to save individual invoice file:", fileError)
+    const fileSaved = await safeWriteFile(filePath, JSON.stringify(enrichedInvoiceData, null, 2))
+    if (!fileSaved) {
+      console.error("Failed to save individual invoice file after all attempts")
       return NextResponse.json(
         {
           success: false,
-          message: "Gagal menyimpan file invoice. Silakan coba lagi.",
+          message: "Gagal menyimpan file invoice. Silakan coba lagi atau hubungi administrator.",
         },
         { status: 500 },
       )
     }
+
+    console.log("Individual invoice file saved successfully")
 
     // Update master log file with complete historical data
     const logPath = path.join(invoicesDir, "invoice-log.json")
@@ -223,26 +424,21 @@ export async function POST(request: NextRequest) {
     console.log("Processing invoice log:", logPath)
 
     // Try to read existing log
-    try {
-      const logContent = await safeReadFile(logPath)
-      if (logContent) {
-        try {
-          invoiceLog = JSON.parse(logContent)
-          console.log("Existing log loaded, entries:", invoiceLog.length)
-        } catch (parseError) {
-          console.error("Failed to parse existing log, creating new:", parseError)
-          invoiceLog = []
-        }
-      } else {
-        console.log("No existing log found, creating new")
+    const logContent = await safeReadFile(logPath)
+    if (logContent) {
+      try {
+        invoiceLog = JSON.parse(logContent)
+        console.log("Existing log loaded, entries:", invoiceLog.length)
+      } catch (parseError) {
+        console.error("Failed to parse existing log, creating new:", parseError)
         invoiceLog = []
       }
-    } catch (logReadError) {
-      console.log("Creating new invoice log file")
+    } else {
+      console.log("No existing log found, creating new")
       invoiceLog = []
     }
 
-    // Create comprehensive log entry with all data for historical tracking
+    // Create comprehensive log entry
     const logEntry = {
       invoiceNumber: invoiceData.invoiceNumber,
       customer: invoiceData.customer,
@@ -258,10 +454,9 @@ export async function POST(request: NextRequest) {
       paidAmount,
       remainingAmount,
       dpAmount,
-      items: invoiceData.items, // Store complete item details
+      items: invoiceData.items,
       note: invoiceData.note || "",
       paymentHistory: paymentHistory,
-      // Add version tracking for historical data
       version: 1,
       isActive: true,
     }
@@ -269,11 +464,8 @@ export async function POST(request: NextRequest) {
     // Check if invoice already exists in log
     const existingIndex = invoiceLog.findIndex((inv: any) => inv.invoiceNumber === invoiceData.invoiceNumber)
     if (existingIndex >= 0) {
-      // Mark previous version as inactive (for historical tracking)
       invoiceLog[existingIndex].isActive = false
       invoiceLog[existingIndex].version = invoiceLog[existingIndex].version || 1
-
-      // Add new version
       logEntry.version = (invoiceLog[existingIndex].version || 1) + 1
       invoiceLog.push(logEntry)
       console.log("Updated existing invoice, new version:", logEntry.version)
@@ -282,17 +474,15 @@ export async function POST(request: NextRequest) {
       console.log("Added new invoice to log")
     }
 
-    // Sort by creation date (newest first) but keep all historical data
+    // Sort by creation date
     invoiceLog.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
-    // Save updated log
-    try {
-      await safeWriteFile(logPath, JSON.stringify(invoiceLog, null, 2))
+    // Save updated log (don't fail if this fails)
+    const logSaved = await safeWriteFile(logPath, JSON.stringify(invoiceLog, null, 2))
+    if (logSaved) {
       console.log("Invoice log updated successfully")
-    } catch (logSaveError) {
-      console.error("Failed to save invoice log:", logSaveError)
-      // Don't fail the entire operation if log save fails
-      console.log("Continuing despite log save failure...")
+    } else {
+      console.log("Invoice log update failed, but invoice was saved")
     }
 
     console.log(`=== INVOICE SAVE SUCCESS: ${invoiceData.invoiceNumber} ===`)
@@ -306,6 +496,7 @@ export async function POST(request: NextRequest) {
       paymentStatus,
       remainingAmount,
       timestamp: new Date().toISOString(),
+      storageLocation: invoicesDir,
     })
   } catch (error) {
     console.error("=== INVOICE SAVE ERROR ===", error)
@@ -315,13 +506,13 @@ export async function POST(request: NextRequest) {
 
     if (error instanceof Error) {
       if (error.message.includes("ENOENT")) {
-        errorMessage = "Direktori penyimpanan tidak dapat diakses. Silakan coba lagi."
-      } else if (error.message.includes("EACCES")) {
-        errorMessage = "Tidak memiliki izin untuk menyimpan file. Silakan hubungi administrator."
+        errorMessage = "Direktori penyimpanan tidak dapat diakses. Sistem akan mencoba lokasi alternatif."
+      } else if (error.message.includes("EACCES") || error.message.includes("EPERM")) {
+        errorMessage = "Tidak memiliki izin untuk menyimpan file. Silakan refresh halaman dan coba lagi."
       } else if (error.message.includes("ENOSPC")) {
         errorMessage = "Ruang penyimpanan tidak cukup. Silakan hubungi administrator."
-      } else if (error.message.includes("Cannot create directory")) {
-        errorMessage = "Gagal membuat direktori penyimpanan. Silakan coba lagi."
+      } else if (error.message.includes("EMFILE") || error.message.includes("ENFILE")) {
+        errorMessage = "Terlalu banyak file terbuka. Silakan refresh halaman dan coba lagi."
       }
     }
 
@@ -329,6 +520,7 @@ export async function POST(request: NextRequest) {
       {
         success: false,
         message: errorMessage,
+        suggestion: "Coba refresh halaman dan ulangi, atau hubungi administrator jika masalah berlanjut.",
         error: process.env.NODE_ENV === "development" ? error.message : undefined,
         timestamp: new Date().toISOString(),
       },
@@ -337,7 +529,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET method to retrieve saved invoices
+// GET method with enhanced error handling
 export async function GET(request: NextRequest) {
   try {
     console.log("=== INVOICE GET REQUEST START ===")
@@ -346,23 +538,33 @@ export async function GET(request: NextRequest) {
     const invoiceNumber = searchParams.get("invoice")
     const includeHistory = searchParams.get("history") === "true"
 
-    const dataDir = path.join(process.cwd(), "data")
-    const invoicesDir = path.join(dataDir, "invoices")
+    // Check memory storage first (fallback)
+    const memoryStorage = globalThis as any
+    if (memoryStorage?.invoiceStorage && invoiceNumber) {
+      const memoryData = memoryStorage.invoiceStorage.get(invoiceNumber)
+      if (memoryData) {
+        console.log("Retrieved from memory storage:", invoiceNumber)
+        return NextResponse.json({
+          success: true,
+          invoice: memoryData,
+          source: "memory",
+        })
+      }
+    }
 
+    const invoicesDir = getStorageDirectory()
     console.log("GET request params:", { invoiceNumber, includeHistory, invoicesDir })
 
-    // Ensure directories exist
-    try {
-      await ensureDirectoryExists(dataDir)
-      await ensureDirectoryExists(invoicesDir)
-    } catch (dirError) {
-      console.error("Directory access failed:", dirError)
+    // Try to ensure directory exists, but don't fail if it doesn't
+    const dirExists = await ensureDirectoryExists(invoicesDir)
+    if (!dirExists) {
+      console.log("Storage directory not available, returning empty results")
       return NextResponse.json({
         success: true,
         invoices: [],
         totalRecords: 0,
         activeRecords: 0,
-        message: "Direktori penyimpanan belum tersedia. Silakan buat invoice pertama.",
+        message: "Sistem penyimpanan belum tersedia. Silakan buat invoice pertama.",
       })
     }
 
@@ -371,33 +573,33 @@ export async function GET(request: NextRequest) {
       const filePath = path.join(invoicesDir, `${invoiceNumber}.json`)
       console.log("Looking for specific invoice:", filePath)
 
-      try {
-        const fileContent = await safeReadFile(filePath)
-        if (fileContent) {
+      const fileContent = await safeReadFile(filePath)
+      if (fileContent) {
+        try {
           const invoiceData = JSON.parse(fileContent)
           console.log("Found specific invoice:", invoiceNumber)
           return NextResponse.json({
             success: true,
             invoice: invoiceData,
           })
-        } else {
-          console.log("Specific invoice not found:", invoiceNumber)
+        } catch (parseError) {
+          console.error("Failed to parse invoice data:", parseError)
           return NextResponse.json(
             {
               success: false,
-              message: "Invoice tidak ditemukan",
+              message: "Data invoice rusak",
             },
-            { status: 404 },
+            { status: 500 },
           )
         }
-      } catch (error) {
-        console.error("Error reading specific invoice:", error)
+      } else {
+        console.log("Specific invoice not found:", invoiceNumber)
         return NextResponse.json(
           {
             success: false,
-            message: "Gagal membaca data invoice",
+            message: "Invoice tidak ditemukan",
           },
-          { status: 500 },
+          { status: 404 },
         )
       }
     } else {
@@ -405,21 +607,19 @@ export async function GET(request: NextRequest) {
       const logPath = path.join(invoicesDir, "invoice-log.json")
       console.log("Looking for invoice log:", logPath)
 
-      try {
-        const logContent = await safeReadFile(logPath)
-        if (logContent) {
+      const logContent = await safeReadFile(logPath)
+      if (logContent) {
+        try {
           const logData = JSON.parse(logContent)
           console.log("Invoice log loaded, entries:", logData.length)
 
           if (includeHistory) {
-            // Return all historical data
             return NextResponse.json({
               success: true,
               invoices: logData || [],
               totalRecords: logData.length,
             })
           } else {
-            // Return only active (latest) versions
             const activeInvoices = logData.filter((inv: any) => inv.isActive !== false)
             console.log("Active invoices:", activeInvoices.length)
             return NextResponse.json({
@@ -429,24 +629,24 @@ export async function GET(request: NextRequest) {
               activeRecords: activeInvoices.length,
             })
           }
-        } else {
-          console.log("No invoice log found")
+        } catch (parseError) {
+          console.error("Failed to parse log data:", parseError)
           return NextResponse.json({
             success: true,
             invoices: [],
             totalRecords: 0,
             activeRecords: 0,
-            message: "Belum ada invoice tersimpan.",
+            message: "Log data rusak, tapi sistem masih berfungsi.",
           })
         }
-      } catch (error) {
-        console.error("Error reading invoice log:", error)
+      } else {
+        console.log("No invoice log found")
         return NextResponse.json({
           success: true,
           invoices: [],
           totalRecords: 0,
           activeRecords: 0,
-          message: "Gagal membaca log invoice, tapi sistem masih berfungsi.",
+          message: "Belum ada invoice tersimpan.",
         })
       }
     }
@@ -463,7 +663,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// PUT method to update payment status
+// PUT method with enhanced error handling
 export async function PUT(request: NextRequest) {
   try {
     console.log("=== INVOICE UPDATE REQUEST START ===")
@@ -479,16 +679,12 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    const dataDir = path.join(process.cwd(), "data")
-    const invoicesDir = path.join(dataDir, "invoices")
+    const invoicesDir = getStorageDirectory()
     const filePath = path.join(invoicesDir, `${invoiceNumber}.json`)
 
-    // Ensure directories exist
-    try {
-      await ensureDirectoryExists(dataDir)
-      await ensureDirectoryExists(invoicesDir)
-    } catch (dirError) {
-      console.error("Directory access failed:", dirError)
+    // Ensure directory exists
+    const dirExists = await ensureDirectoryExists(invoicesDir)
+    if (!dirExists) {
       return NextResponse.json(
         { success: false, message: "Direktori penyimpanan tidak dapat diakses" },
         { status: 500 },
@@ -552,11 +748,9 @@ export async function PUT(request: NextRequest) {
     invoiceData.updatedAt = new Date().toISOString()
 
     // Save updated invoice
-    try {
-      await safeWriteFile(filePath, JSON.stringify(invoiceData, null, 2))
-      console.log("Invoice updated successfully")
-    } catch (saveError) {
-      console.error("Failed to save updated invoice:", saveError)
+    const fileSaved = await safeWriteFile(filePath, JSON.stringify(invoiceData, null, 2))
+    if (!fileSaved) {
+      console.error("Failed to save updated invoice")
       return NextResponse.json(
         {
           success: false,
@@ -566,19 +760,18 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    // Update log file with historical tracking
-    const logPath = path.join(invoicesDir, "invoice-log.json")
-    try {
-      const logContent = await safeReadFile(logPath)
-      if (logContent) {
-        const logData = JSON.parse(logContent)
+    console.log("Invoice updated successfully")
 
-        // Find the active version and update it
+    // Update log file (don't fail if this fails)
+    const logPath = path.join(invoicesDir, "invoice-log.json")
+    const logContent = await safeReadFile(logPath)
+    if (logContent) {
+      try {
+        const logData = JSON.parse(logContent)
         const activeIndex = logData.findIndex(
           (inv: any) => inv.invoiceNumber === invoiceNumber && inv.isActive !== false,
         )
         if (activeIndex >= 0) {
-          // Create historical entry for payment update
           const historyEntry = {
             ...logData[activeIndex],
             paymentStatus,
@@ -591,22 +784,16 @@ export async function PUT(request: NextRequest) {
             isActive: true,
           }
 
-          // Mark previous version as inactive
           logData[activeIndex].isActive = false
-
-          // Add new version
           logData.push(historyEntry)
-
-          // Sort by update time
           logData.sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 
           await safeWriteFile(logPath, JSON.stringify(logData, null, 2))
           console.log("Invoice log updated for payment")
         }
+      } catch (logError) {
+        console.error("Failed to update log, but payment was saved:", logError)
       }
-    } catch (logError) {
-      console.error("Failed to update log, but payment was saved:", logError)
-      // Don't fail the operation if log update fails
     }
 
     console.log("=== INVOICE UPDATE SUCCESS ===")
